@@ -1,0 +1,8 @@
+# Compiled files and executables
+target
+
+# MSVC Windows builds of rustc generate these, which store debugging information
+*.pdb
+
+# RustRover
+.idea/
