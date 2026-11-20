@@ -36,6 +36,18 @@ impl Format {
     }
 }
 
+/// A 2D pixel target that the rasterizer can draw into without depending on a specific image format.
+pub trait Framebuffer {
+    /// Returns the width of the framebuffer in pixels.
+    fn width(&self) -> usize;
+
+    /// Returns the height of the framebuffer in pixels.
+    fn height(&self) -> usize;
+
+    /// Sets the pixel at `(x, y)` to `color`, returning `false` if clipped out of bounds.
+    fn set(&mut self, x: usize, y: usize, color: Color) -> bool;
+}
+
 /// A 2D framebuffer image capable of being exported to TGA format.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TgaImage {
@@ -186,6 +198,20 @@ impl TgaImage {
     ) -> io::Result<()> {
         let mut file = File::create(path)?;
         self.write_tga(&mut file, vflip)
+    }
+}
+
+impl Framebuffer for TgaImage {
+    fn width(&self) -> usize {
+        self.width
+    }
+
+    fn height(&self) -> usize {
+        self.height
+    }
+
+    fn set(&mut self, x: usize, y: usize, color: Color) -> bool {
+        TgaImage::set(self, x, y, color)
     }
 }
 

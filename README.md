@@ -5,6 +5,8 @@ code is [here](https://github.com/ssloy/tinyrenderer).
 
 Aim is learning & fun, rather than a re-usable production grade graphics library.
 
+Have implemented the first two lessons. Next time start at https://haqr.eu/tinyrenderer/rasterization/
+
 ## Architectural Decisions
 
 Uses the standard library only to learn core principles rather than using `glam`, `nalgebra`, `ndarray` crates for
@@ -14,7 +16,6 @@ Uses a bottom-left origin `(0, 0)` to match Cartesian / OpenGL conventions.
 
 ## Running
 
-Run the Lesson 0 program to generate `framebuffer.tga`:
 ```bash
 cargo run
 ```
