@@ -5,6 +5,11 @@
 
 pub mod color;
 pub mod image;
+pub mod math;
+pub mod mesh;
+pub mod rasterizer;
 
 pub use color::Color;
-pub use image::{Format, TgaImage};
+pub use image::{Format, Framebuffer, TgaImage};
+pub use math::Vec3;
+pub use mesh::{Mesh, MeshError};

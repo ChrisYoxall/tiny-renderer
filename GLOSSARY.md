@@ -21,3 +21,27 @@ _Avoid_: Dot, point
 The 2D coordinate system of the framebuffer, where origin `(0, 0)` is in the bottom-left corner with `x` increasing
 rightward and `y` increasing upward.
 _Avoid_: Window space, raster space
+
+**Rasterization**:
+The process of converting geometric primitives (such as line segments or triangles) into discrete pixels in a framebuffer.
+_Avoid_: Drawing, painting, rendering (when referring specifically to pixel conversion)
+
+**Line Segment**:
+A finite straight primitive defined by two endpoints in screen coordinates.
+_Avoid_: Line, edge (unless referring specifically to a mesh polygon boundary)
+
+**Mesh**:
+A 3D geometric surface defined by a collection of vertices and faces.
+_Avoid_: Model, object
+
+**Vertex**:
+A 3D position in normalized model coordinates `[-1, 1]³`.
+_Avoid_: Point, corner
+
+**Face**:
+An ordered list of vertex indices forming a closed surface element.
+_Avoid_: Polygon, triangle (when referring to general `.obj` faces)
+
+**Wireframe**:
+A rendering mode that rasterizes only the edges of each face as line segments.
+_Avoid_: Skeleton, outline
