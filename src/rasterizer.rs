@@ -6,13 +6,15 @@ use crate::mesh::Mesh;
 /// Rasterizes a line segment between `(ax, ay)` and `(bx, by)` in screen coordinates
 /// using integer-only Bresenham's algorithm, clipping pixels outside the framebuffer.
 pub fn line<F: Framebuffer>(
-    mut ax: i32,
-    mut ay: i32,
-    mut bx: i32,
-    mut by: i32,
+    ax: i32,
+    ay: i32,
+    bx: i32,
+    by: i32,
     fb: &mut F,
     color: Color,
 ) {
+    let (mut ax, mut ay, mut bx, mut by) = (ax as i64, ay as i64, bx as i64, by as i64);
+
     let steep = (ax - bx).abs() < (ay - by).abs();
     if steep {
         std::mem::swap(&mut ax, &mut ay);
@@ -24,24 +26,43 @@ pub fn line<F: Framebuffer>(
         std::mem::swap(&mut ay, &mut by);
     }
 
+    let width = fb.width();
+    let height = fb.height();
+    if width == 0 || height == 0 {
+        return;
+    }
+
+    let max_primary = if steep { height } else { width } as i64 - 1;
+    let x_start = ax.max(0);
+    let x_end = bx.min(max_primary);
+    if x_start > x_end {
+        return;
+    }
+
     let dx = bx - ax;
     let dy = by - ay;
     let derror2 = dy.abs() * 2;
-    let mut error2 = 0;
+    let ystep: i64 = if by > ay { 1 } else { -1 };
+
     let mut y = ay;
-    let ystep = if by > ay { 1 } else { -1 };
+    let mut error2: i64 = 0;
+    if x_start > ax {
+        // Fast-forward Bresenham state to `x_start` in O(1) without rounding drift.
+        let k = (x_start - ax) as i128;
+        let dx128 = dx as i128;
+        let total = k * (derror2 as i128);
+        let steps_y = (total + dx128 - 1) / (2 * dx128);
+        y += (steps_y as i64) * ystep;
+        error2 = (total - steps_y * 2 * dx128) as i64;
+    }
 
-    let width = fb.width();
-    let height = fb.height();
-
-    for x in ax..=bx {
+    for x in x_start..=x_end {
         let (px, py) = if steep { (y, x) } else { (x, y) };
-        if px >= 0 && py >= 0 {
-            let ux = px as usize;
-            let uy = py as usize;
-            if ux < width && uy < height {
-                fb.set(ux, uy, color);
-            }
+        if let (Ok(ux), Ok(uy)) = (usize::try_from(px), usize::try_from(py))
+            && ux < width
+            && uy < height
+        {
+            fb.set(ux, uy, color);
         }
 
         error2 += derror2;
@@ -167,5 +188,23 @@ mod tests {
         let mut fb = MockFramebuffer::new(4, 4);
         line(-2, -2, 5, 5, &mut fb, Color::WHITE);
         assert_eq!(fb.lit_pixels(), vec![(0, 0), (1, 1), (2, 2), (3, 3)]);
+    }
+
+    #[test]
+    fn test_extreme_i32_coordinates_do_not_overflow() {
+        let mut fb = MockFramebuffer::new(3, 3);
+        line(i32::MIN, i32::MIN, i32::MAX, i32::MAX, &mut fb, Color::WHITE);
+        assert_eq!(fb.lit_pixels(), vec![(0, 0), (1, 1), (2, 2)]);
+
+        let mut fb_rev = MockFramebuffer::new(3, 3);
+        line(
+            1_500_000_000,
+            -1_499_999_998,
+            -1_500_000_000,
+            1_500_000_002,
+            &mut fb_rev,
+            Color::WHITE,
+        );
+        assert_eq!(fb_rev.lit_pixels(), vec![(2, 0), (1, 1), (0, 2)]);
     }
 }
