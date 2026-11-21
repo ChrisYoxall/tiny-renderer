@@ -39,11 +39,25 @@ impl From<io::Error> for MeshError {
     }
 }
 
-/// A 3D geometric surface defined by vertices and polygonal faces.
+/// A 3D geometric surface defined by vertices and triangular faces.
+///
+/// # Internal Representation
+///
+/// Faces are stored as a flat, contiguous `Vec<[usize; 3]>` rather than dynamic
+/// polygon vectors (`Vec<Vec<usize>>`):
+/// - **Zero Per-Face Allocations**: Stores all faces in a single contiguous buffer on the heap,
+///   eliminating thousands of tiny allocations during `.obj` parsing and avoiding pointer chasing.
+/// - **Cache Locality & SIMD**: Fixed 3-vertex strides allow the compiler to unroll loops and
+///   vectorize vertex lookups with direct stride arithmetic.
+/// - **Pipeline Compatibility**: Later graphics pipeline stages (such as barycentric rasterization,
+///   z-buffering, and fragment shading) mathematically operate exclusively on triangles.
+///
+/// When loading Wavefront `.obj` files, polygons with more than 3 vertices (such as quads or n-gons)
+/// are decomposed into triangles at load time via fan triangulation (`[v0, vi, vi+1]`).
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Mesh {
     vertices: Vec<Vec3>,
-    faces: Vec<Vec<usize>>,
+    faces: Vec<[usize; 3]>,
 }
 
 impl Mesh {
@@ -52,8 +66,8 @@ impl Mesh {
         &self.vertices
     }
 
-    /// Returns the slice of faces, where each face is an ordered list of 0-based vertex indices.
-    pub fn faces(&self) -> &[Vec<usize>] {
+    /// Returns the slice of faces, where each face consists of three 0-based vertex indices.
+    pub fn faces(&self) -> &[[usize; 3]] {
         &self.faces
     }
 
@@ -67,6 +81,7 @@ impl Mesh {
     ///
     /// Supports `v x y z` vertex definitions and `f` face definitions (`v`, `v/vt`, `v//vn`,
     /// `v/vt/vn`) with both positive 1-based and negative relative vertex indices.
+    /// Polygonal faces with more than 3 vertices are triangulated using fan triangulation.
     pub fn from_obj_str(input: &str) -> Result<Self, MeshError> {
         let mut vertices = Vec::new();
         let mut faces = Vec::new();
@@ -85,8 +100,7 @@ impl Mesh {
                     vertices.push(vertex);
                 }
                 Some("f") => {
-                    let face = parse_face(parts, vertices.len(), line_num)?;
-                    faces.push(face);
+                    parse_face(parts, vertices.len(), line_num, &mut faces)?;
                 }
                 _ => {}
             }
@@ -121,8 +135,9 @@ fn parse_face<'a>(
     parts: impl Iterator<Item = &'a str>,
     vertex_count: usize,
     line_num: usize,
-) -> Result<Vec<usize>, MeshError> {
-    let mut face = Vec::new();
+    faces: &mut Vec<[usize; 3]>,
+) -> Result<(), MeshError> {
+    let mut indices = Vec::with_capacity(4);
     for token in parts {
         let vert_token = token.split('/').next().unwrap_or("");
         let raw_index = vert_token.parse::<isize>().map_err(|_| MeshError::Parse {
@@ -131,17 +146,21 @@ fn parse_face<'a>(
         })?;
 
         let resolved = resolve_obj_index(raw_index, vertex_count, line_num)?;
-        face.push(resolved);
+        indices.push(resolved);
     }
 
-    if face.len() < 2 {
+    if indices.len() < 3 {
         return Err(MeshError::Parse {
             line: line_num,
-            message: "face must reference at least 2 vertices".to_string(),
+            message: "face must reference at least 3 vertices".to_string(),
         });
     }
 
-    Ok(face)
+    for i in 1..(indices.len() - 1) {
+        faces.push([indices[0], indices[i], indices[i + 1]]);
+    }
+
+    Ok(())
 }
 
 fn resolve_obj_index(
@@ -199,7 +218,7 @@ f 1/1/1 2/1/1 3//1 4/1
         let mesh = Mesh::from_obj_str(obj).unwrap();
         assert_eq!(mesh.vertices().len(), 4);
         assert_eq!(mesh.vertices()[2], Vec3::new(1.0, 1.0, 0.0));
-        assert_eq!(mesh.faces(), &[vec![0, 1, 2], vec![0, 1, 2, 3]]);
+        assert_eq!(mesh.faces(), &[[0, 1, 2], [0, 1, 2], [0, 2, 3]]);
     }
 
     #[test]
@@ -211,7 +230,7 @@ v 0.0 1.0 0.0
 f -3 -2 -1
 ";
         let mesh = Mesh::from_obj_str(obj).unwrap();
-        assert_eq!(mesh.faces(), &[vec![0, 1, 2]]);
+        assert_eq!(mesh.faces(), &[[0, 1, 2]]);
     }
 
     #[test]
@@ -219,5 +238,6 @@ f -3 -2 -1
         assert!(Mesh::from_obj_str("v 0 0 0\nf 0 1 1\n").is_err());
         assert!(Mesh::from_obj_str("v 0 0 0\nf 1 2 1\n").is_err());
         assert!(Mesh::from_obj_str("v 0 0 0\nf -2 1 1\n").is_err());
+        assert!(Mesh::from_obj_str("v 0 0 0\nv 1 0 0\nf 1 2\n").is_err());
     }
 }
