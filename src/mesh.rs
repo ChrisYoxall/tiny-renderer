@@ -53,7 +53,8 @@ impl From<io::Error> for MeshError {
 ///   z-buffering, and fragment shading) mathematically operate exclusively on triangles.
 ///
 /// When loading Wavefront `.obj` files, polygons with more than 3 vertices (such as quads or n-gons)
-/// are decomposed into triangles at load time via fan triangulation (`[v0, vi, vi+1]`).
+/// are decomposed into triangles at load time via fan triangulation (`[v0, vi, vi+1]`), which
+/// assumes convex faces.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Mesh {
     vertices: Vec<Vec3>,
@@ -81,10 +82,12 @@ impl Mesh {
     ///
     /// Supports `v x y z` vertex definitions and `f` face definitions (`v`, `v/vt`, `v//vn`,
     /// `v/vt/vn`) with both positive 1-based and negative relative vertex indices.
-    /// Polygonal faces with more than 3 vertices are triangulated using fan triangulation.
+    /// Polygonal faces with more than 3 vertices are triangulated using fan triangulation
+    /// (which assumes convex faces).
     pub fn from_obj_str(input: &str) -> Result<Self, MeshError> {
         let mut vertices = Vec::new();
         let mut faces = Vec::new();
+        let mut indices = Vec::with_capacity(4);
 
         for (idx, raw_line) in input.lines().enumerate() {
             let line_num = idx + 1;
@@ -100,7 +103,7 @@ impl Mesh {
                     vertices.push(vertex);
                 }
                 Some("f") => {
-                    parse_face(parts, vertices.len(), line_num, &mut faces)?;
+                    parse_face(parts, vertices.len(), line_num, &mut faces, &mut indices)?;
                 }
                 _ => {}
             }
@@ -136,8 +139,9 @@ fn parse_face<'a>(
     vertex_count: usize,
     line_num: usize,
     faces: &mut Vec<[usize; 3]>,
+    indices: &mut Vec<usize>,
 ) -> Result<(), MeshError> {
-    let mut indices = Vec::with_capacity(4);
+    indices.clear();
     for token in parts {
         let vert_token = token.split('/').next().unwrap_or("");
         let raw_index = vert_token.parse::<isize>().map_err(|_| MeshError::Parse {

@@ -14,9 +14,9 @@ linear algebra or any image crates.
 
 Uses a bottom-left origin `(0, 0)` to match Cartesian / OpenGL conventions.
 
-Stores mesh faces as contiguous 3-vertex triangle arrays (`Vec<[usize; 3]>`) with load-time fan triangulation rather
-than dynamic polygons (`Vec<Vec<usize>>`). This eliminates per-face heap allocations and aligns with graphics rasterization
-primitives (see [ADR 0002](docs/adr/0002-triangular-mesh-representation.md)).
+Stores mesh faces as contiguous 3-vertex triangle arrays (`Vec<[usize; 3]>`) with load-time fan triangulation (assuming
+convex faces) rather than dynamic polygons (`Vec<Vec<usize>>`). This eliminates per-face heap allocations and aligns
+with graphics rasterization primitives (see [ADR 0002](docs/adr/0002-triangular-mesh-representation.md)).
 
 ## Running
 

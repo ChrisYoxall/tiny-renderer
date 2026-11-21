@@ -80,7 +80,10 @@ pub fn project_to_screen(v: Vec3, width: usize, height: usize) -> (i32, i32) {
     (x, y)
 }
 
-/// Rasterize all face edges of `mesh` as a wireframe in `color`.
+/// Rasterize all triangulated face edges of `mesh` as a wireframe in `color`.
+///
+/// Because [`Mesh`] triangulates polygonal `.obj` faces at load time, any quads or n-gons
+/// are rendered with their triangulation diagonals visible.
 pub fn wireframe<F: Framebuffer>(mesh: &Mesh, fb: &mut F, color: Color) {
     let width = fb.width();
     let height = fb.height();
