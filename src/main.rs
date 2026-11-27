@@ -1,11 +1,12 @@
 use std::error::Error;
-use tiny_renderer::{Color, Format, Mesh, TgaImage, rasterizer};
+#[allow(unused_imports)]
+use tiny_renderer::{Color, CullMode, Format, Mesh, ScreenPoint, TgaImage, rasterizer};
 
 fn main() -> Result<(), Box<dyn Error>> {
     const WIDTH: usize = 800;
     const HEIGHT: usize = 800;
 
-    // Swap any of the sample Wavefront meshes below to render a different wireframe:
+    // Swap any of the sample Wavefront meshes below to render a different model:
     let model_path = "wavefront/african_head/african_head.obj";
     // let model_path = "wavefront/african_head/african_head_eye_inner.obj";
     // let model_path = "wavefront/african_head/african_head_eye_outer.obj";
@@ -18,11 +19,23 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mesh = Mesh::from_obj_file(model_path)?;
     let mut framebuffer = TgaImage::new(WIDTH, HEIGHT, Format::Rgb);
 
-    rasterizer::wireframe(&mesh, &mut framebuffer, Color::WHITE);
+    // Swap render mode below:
+    //rasterizer::mesh_random_colors(&mesh, &mut framebuffer, 42);
+    // rasterizer::wireframe(&mesh, &mut framebuffer, Color::WHITE);
+    rasterizer::triangle_interpolated(
+        [
+            ScreenPoint::new(100, 100),
+            ScreenPoint::new(700, 150),
+            ScreenPoint::new(350, 700),
+        ],
+        [Color::RED, Color::GREEN, Color::BLUE],
+        CullMode::None,
+        &mut framebuffer,
+    );
 
     framebuffer.write_tga_file("framebuffer.tga")?;
     println!(
-        "Rendered wireframe for '{}' ({} vertices, {} faces) to framebuffer.tga ({}x{}).",
+        "Rendered '{}' ({} vertices, {} faces) to framebuffer.tga ({}x{}).",
         model_path,
         mesh.vertices().len(),
         mesh.faces().len(),

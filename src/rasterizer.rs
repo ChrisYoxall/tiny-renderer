@@ -1,7 +1,19 @@
 use crate::color::Color;
 use crate::image::Framebuffer;
-use crate::math::Vec3;
+use crate::math::{Barycentric, ScreenPoint, Vec3};
 use crate::mesh::Mesh;
+
+/// Controls whether back-facing triangles are discarded during rasterization.
+///
+/// With a bottom-left `(0, 0)` screen coordinate origin, counter-clockwise (CCW) triangles
+/// have positive signed area and are considered front-facing (matching OpenGL convention).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CullMode {
+    /// Discard clockwise (back-facing) triangles where signed area is negative.
+    Back,
+    /// Rasterize both counter-clockwise and clockwise triangles.
+    None,
+}
 
 /// Rasterize a line segment between `(ax, ay)` and `(bx, by)` in screen coordinates
 /// using integer-only Bresenham's algorithm, clipping pixels outside the framebuffer.
@@ -73,11 +85,110 @@ pub fn line<F: Framebuffer>(
     }
 }
 
+/// Computes twice the signed area of triangle `(a, b, c)` in screen coordinates.
+///
+/// Positive for counter-clockwise (CCW) winding, negative for clockwise (CW) winding,
+/// and zero for degenerate (collinear) triangles. Uses `i128` to avoid overflow for all `i32` inputs.
+#[inline]
+pub fn signed_area2(a: ScreenPoint, b: ScreenPoint, c: ScreenPoint) -> i128 {
+    let ab_x = b.x as i128 - a.x as i128;
+    let ab_y = b.y as i128 - a.y as i128;
+    let ac_x = c.x as i128 - a.x as i128;
+    let ac_y = c.y as i128 - a.y as i128;
+    ab_x * ac_y - ab_y * ac_x
+}
+
+/// Rasterize a filled triangle using a clipped screen-space bounding box and barycentric
+/// coordinates, invoking `shade` for every covered pixel.
+///
+/// Degenerate (zero-area) triangles are always skipped. When `cull` is [`CullMode::Back`],
+/// clockwise (negative signed area) triangles are also discarded.
+pub fn triangle_with<F, S>(
+    verts: [ScreenPoint; 3],
+    cull: CullMode,
+    fb: &mut F,
+    mut shade: S,
+) where
+    F: Framebuffer,
+    S: FnMut(Barycentric) -> Color,
+{
+    let width = fb.width();
+    let height = fb.height();
+    if width == 0 || height == 0 {
+        return;
+    }
+
+    let [a, b, c] = verts;
+    let total = signed_area2(a, b, c);
+    if total == 0 || (cull == CullMode::Back && total < 0) {
+        return;
+    }
+
+    let max_x = (width - 1) as i64;
+    let max_y = (height - 1) as i64;
+    let min_x = (a.x.min(b.x).min(c.x) as i64).max(0);
+    let max_bx = (a.x.max(b.x).max(c.x) as i64).min(max_x);
+    let min_y = (a.y.min(b.y).min(c.y) as i64).max(0);
+    let max_by = (a.y.max(b.y).max(c.y) as i64).min(max_y);
+    if min_x > max_bx || min_y > max_by {
+        return;
+    }
+
+    let inv_total = 1.0 / (total as f64);
+    let is_ccw = total > 0;
+
+    for y in min_y..=max_by {
+        for x in min_x..=max_bx {
+            let p = ScreenPoint::new(x as i32, y as i32);
+            let w0 = signed_area2(p, b, c);
+            let w1 = signed_area2(p, c, a);
+            let w2 = signed_area2(p, a, b);
+
+            let inside = if is_ccw {
+                w0 >= 0 && w1 >= 0 && w2 >= 0
+            } else {
+                w0 <= 0 && w1 <= 0 && w2 <= 0
+            };
+
+            if inside {
+                let bary = Barycentric::new(
+                    (w0 as f64 * inv_total) as f32,
+                    (w1 as f64 * inv_total) as f32,
+                    (w2 as f64 * inv_total) as f32,
+                );
+                fb.set(x as usize, y as usize, shade(bary));
+            }
+        }
+    }
+}
+
+/// Rasterize a filled triangle with a single flat `color`.
+pub fn triangle_flat<F: Framebuffer>(
+    verts: [ScreenPoint; 3],
+    cull: CullMode,
+    fb: &mut F,
+    color: Color,
+) {
+    triangle_with(verts, cull, fb, |_| color);
+}
+
+/// Rasterize a filled triangle, smoothly interpolating per-vertex `colors` via barycentric weights.
+pub fn triangle_interpolated<F: Framebuffer>(
+    verts: [ScreenPoint; 3],
+    colors: [Color; 3],
+    cull: CullMode,
+    fb: &mut F,
+) {
+    triangle_with(verts, cull, fb, |bary| {
+        bary.interpolate_color(colors[0], colors[1], colors[2])
+    });
+}
+
 /// Projects a normalized model-space vertex `[-1, 1]³` into 2D screen coordinates.
-pub fn project_to_screen(v: Vec3, width: usize, height: usize) -> (i32, i32) {
+pub fn project_to_screen(v: Vec3, width: usize, height: usize) -> ScreenPoint {
     let x = ((v.x + 1.0) * 0.5 * width.saturating_sub(1) as f32).round() as i32;
     let y = ((v.y + 1.0) * 0.5 * height.saturating_sub(1) as f32).round() as i32;
-    (x, y)
+    ScreenPoint::new(x, y)
 }
 
 /// Rasterize all triangulated face edges of `mesh` as a wireframe in `color`.
@@ -93,10 +204,56 @@ pub fn wireframe<F: Framebuffer>(mesh: &Mesh, fb: &mut F, color: Color) {
         for i in 0..face.len() {
             let v0 = vertices[face[i]];
             let v1 = vertices[face[(i + 1) % face.len()]];
-            let (ax, ay) = project_to_screen(v0, width, height);
-            let (bx, by) = project_to_screen(v1, width, height);
-            line(ax, ay, bx, by, fb, color);
+            let a = project_to_screen(v0, width, height);
+            let b = project_to_screen(v1, width, height);
+            line(a.x, a.y, b.x, b.y, fb, color);
         }
+    }
+}
+
+/// Minimal pure-`std` deterministic PRNG (xorshift64) for reproducible per-face colors.
+struct Xorshift64 {
+    state: u64,
+}
+
+impl Xorshift64 {
+    const DEFAULT_SEED: u64 = 0x9E37_79B9_7F4A_7C15;
+
+    fn new(seed: u64) -> Self {
+        Self {
+            state: if seed == 0 { Self::DEFAULT_SEED } else { seed },
+        }
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        let mut x = self.state;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.state = x;
+        x
+    }
+
+    fn next_color(&mut self) -> Color {
+        let bits = self.next_u64();
+        Color::rgb((bits & 0xFF) as u8, ((bits >> 8) & 0xFF) as u8, ((bits >> 16) & 0xFF) as u8)
+    }
+}
+
+/// Rasterize all front-facing triangles of `mesh` with deterministic pseudo-random flat colors
+/// and back-face culling enabled.
+pub fn mesh_random_colors<F: Framebuffer>(mesh: &Mesh, fb: &mut F, seed: u64) {
+    let width = fb.width();
+    let height = fb.height();
+    let vertices = mesh.vertices();
+    let mut rng = Xorshift64::new(seed);
+
+    for face in mesh.faces() {
+        let color = rng.next_color();
+        let a = project_to_screen(vertices[face[0]], width, height);
+        let b = project_to_screen(vertices[face[1]], width, height);
+        let c = project_to_screen(vertices[face[2]], width, height);
+        triangle_flat([a, b, c], CullMode::Back, fb, color);
     }
 }
 
@@ -209,5 +366,121 @@ mod tests {
             Color::WHITE,
         );
         assert_eq!(fb_rev.lit_pixels(), vec![(2, 0), (1, 1), (0, 2)]);
+    }
+
+    #[test]
+    fn test_triangle_ccw_and_backface_culling() {
+        let ccw = [
+            ScreenPoint::new(1, 1),
+            ScreenPoint::new(3, 1),
+            ScreenPoint::new(1, 3),
+        ];
+        let cw = [ccw[0], ccw[2], ccw[1]];
+
+        assert!(signed_area2(ccw[0], ccw[1], ccw[2]) > 0);
+        assert!(signed_area2(cw[0], cw[1], cw[2]) < 0);
+
+        let mut fb_ccw = MockFramebuffer::new(5, 5);
+        triangle_flat(ccw, CullMode::Back, &mut fb_ccw, Color::WHITE);
+        assert_eq!(
+            fb_ccw.lit_pixels(),
+            vec![(1, 1), (2, 1), (3, 1), (1, 2), (2, 2), (1, 3)]
+        );
+
+        let mut fb_cw_culled = MockFramebuffer::new(5, 5);
+        triangle_flat(cw, CullMode::Back, &mut fb_cw_culled, Color::WHITE);
+        assert!(fb_cw_culled.lit_pixels().is_empty());
+
+        let mut fb_cw_unculled = MockFramebuffer::new(5, 5);
+        triangle_flat(cw, CullMode::None, &mut fb_cw_unculled, Color::WHITE);
+        assert_eq!(fb_cw_unculled.lit_pixels(), fb_ccw.lit_pixels());
+    }
+
+    #[test]
+    fn test_triangle_degenerate_and_clipped_and_extreme_coords() {
+        // Collinear (zero area) triangle is skipped regardless of CullMode.
+        let mut fb_deg = MockFramebuffer::new(5, 5);
+        triangle_flat(
+            [
+                ScreenPoint::new(0, 0),
+                ScreenPoint::new(2, 2),
+                ScreenPoint::new(4, 4),
+            ],
+            CullMode::None,
+            &mut fb_deg,
+            Color::RED,
+        );
+        assert!(fb_deg.lit_pixels().is_empty());
+
+        // Triangle extending outside framebuffer is safely clipped.
+        let mut fb_clip = MockFramebuffer::new(3, 3);
+        triangle_flat(
+            [
+                ScreenPoint::new(-5, -5),
+                ScreenPoint::new(10, -5),
+                ScreenPoint::new(-5, 10),
+            ],
+            CullMode::Back,
+            &mut fb_clip,
+            Color::GREEN,
+        );
+        assert_eq!(fb_clip.lit_pixels().len(), 9);
+
+        // Extreme i32 coordinates do not overflow signed_area2.
+        let mut fb_ext = MockFramebuffer::new(2, 2);
+        triangle_flat(
+            [
+                ScreenPoint::new(-1_500_000_000, -1_500_000_000),
+                ScreenPoint::new(i32::MAX, -1_500_000_000),
+                ScreenPoint::new(-1_500_000_000, i32::MAX),
+            ],
+            CullMode::Back,
+            &mut fb_ext,
+            Color::BLUE,
+        );
+        assert_eq!(fb_ext.lit_pixels().len(), 4);
+    }
+
+    #[test]
+    fn test_triangle_interpolated_colors() {
+        let mut fb = MockFramebuffer::new(7, 7);
+        let verts = [
+            ScreenPoint::new(0, 0),
+            ScreenPoint::new(6, 0),
+            ScreenPoint::new(0, 6),
+        ];
+        triangle_interpolated(
+            verts,
+            [Color::RED, Color::GREEN, Color::BLUE],
+            CullMode::None,
+            &mut fb,
+        );
+
+        assert_eq!(fb.get(0, 0), Color::RED);
+        assert_eq!(fb.get(6, 0), Color::GREEN);
+        assert_eq!(fb.get(0, 6), Color::BLUE);
+        // Centroid (2, 2) has equal barycentric weights (1/3, 1/3, 1/3).
+        assert_eq!(fb.get(2, 2), Color::rgb(85, 85, 85));
+    }
+
+    #[test]
+    fn test_mesh_random_colors_is_deterministic_and_culls_backfaces() {
+        // Two triangles: face 0 is CCW (front-facing), face 1 is CW (back-facing).
+        let obj = "\
+v -0.5 -0.5 0.0
+v  0.5 -0.5 0.0
+v -0.5  0.5 0.0
+f 1 2 3
+f 1 3 2
+";
+        let mesh = Mesh::from_obj_str(obj).unwrap();
+
+        let mut fb1 = MockFramebuffer::new(10, 10);
+        let mut fb2 = MockFramebuffer::new(10, 10);
+        mesh_random_colors(&mesh, &mut fb1, 42);
+        mesh_random_colors(&mesh, &mut fb2, 42);
+
+        assert!(!fb1.lit_pixels().is_empty());
+        assert_eq!(fb1.pixels, fb2.pixels);
     }
 }
