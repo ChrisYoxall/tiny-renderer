@@ -29,6 +29,28 @@ impl ScreenPoint {
     }
 }
 
+/// A projected vertex in screen coordinates `(x, y)` paired with its depth `z`.
+///
+/// Larger `z` values are closer to the viewer.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub struct ScreenVertex {
+    pub x: i32,
+    pub y: i32,
+    pub z: f32,
+}
+
+impl ScreenVertex {
+    /// Creates a new `ScreenVertex` at screen coordinate `(x, y)` with depth `z`.
+    pub const fn new(x: i32, y: i32, z: f32) -> Self {
+        Self { x, y, z }
+    }
+
+    /// Returns the 2D screen coordinate `(x, y)` without depth.
+    pub const fn point(self) -> ScreenPoint {
+        ScreenPoint::new(self.x, self.y)
+    }
+}
+
 /// Normalized barycentric coordinates `(alpha, beta, gamma)` with respect to a triangle's
 /// three vertices `(A, B, C)`, where `alpha + beta + gamma == 1`.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]

@@ -1,5 +1,5 @@
 use std::error::Error;
-use tiny_renderer::{Color, CullMode, Format, Mesh, ScreenPoint, TgaImage, rasterizer};
+use tiny_renderer::{Color, CullMode, Format, Mesh, ScreenVertex, TgaImage, ZBuffer, rasterizer};
 
 #[allow(dead_code)]
 enum RenderMode {
@@ -18,21 +18,25 @@ fn main() -> Result<(), Box<dyn Error>> {
     // let mode = RenderMode::BarycentricTriangle;
 
     // Swap any of the sample Wavefront meshes below when using a mesh render mode:
-    let model_path = "wavefront/african_head/african_head.obj";
+    // let model_path = "wavefront/african_head/african_head.obj";
     // let model_path = "wavefront/african_head/african_head_eye_inner.obj";
     // let model_path = "wavefront/african_head/african_head_eye_outer.obj";
     // let model_path = "wavefront/diablo3_pose/diablo3_pose.obj";
     // let model_path = "wavefront/boggie/head.obj";
-    // let model_path = "wavefront/boggie/body.obj";
+    let model_path = "wavefront/boggie/body.obj";
     // let model_path = "wavefront/boggie/eyes.obj";
     // let model_path = "wavefront/floor.obj";
 
     let mut framebuffer = TgaImage::new(WIDTH, HEIGHT, Format::Rgb);
+    let mut zbuffer = ZBuffer::new(WIDTH, HEIGHT);
+    let mut wrote_zbuffer = false;
 
     let summary = match mode {
         RenderMode::MeshRandomColors => {
             let mesh = Mesh::from_obj_file(model_path)?;
-            rasterizer::mesh_random_colors(&mesh, &mut framebuffer, 42);
+            rasterizer::mesh_random_colors(&mesh, &mut framebuffer, &mut zbuffer, 42);
+            zbuffer.to_grayscale_image().write_tga_file("zbuffer.tga")?;
+            wrote_zbuffer = true;
             format!(
                 "'{}' ({} vertices, {} faces)",
                 model_path,
@@ -53,20 +57,25 @@ fn main() -> Result<(), Box<dyn Error>> {
         RenderMode::BarycentricTriangle => {
             rasterizer::triangle_interpolated(
                 [
-                    ScreenPoint::new(100, 100),
-                    ScreenPoint::new(700, 150),
-                    ScreenPoint::new(350, 700),
+                    ScreenVertex::new(100, 100, 0.0),
+                    ScreenVertex::new(700, 150, 0.0),
+                    ScreenVertex::new(350, 700, 0.0),
                 ],
                 [Color::RED, Color::GREEN, Color::BLUE],
                 CullMode::None,
                 &mut framebuffer,
+                &mut zbuffer,
             );
             "barycentric RGB triangle".to_string()
         }
     };
 
     framebuffer.write_tga_file("framebuffer.tga")?;
-    println!("Rendered {summary} to framebuffer.tga ({WIDTH}x{HEIGHT}).");
+    if wrote_zbuffer {
+        println!("Rendered {summary} to framebuffer.tga and zbuffer.tga ({WIDTH}x{HEIGHT}).");
+    } else {
+        println!("Rendered {summary} to framebuffer.tga ({WIDTH}x{HEIGHT}).");
+    }
 
     Ok(())
 }

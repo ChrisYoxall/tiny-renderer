@@ -2,6 +2,7 @@ use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::path::Path;
 
+use crate::buffer::Buffer2D;
 use crate::color::Color;
 
 /// TGA 2.0 footer signature: 4 bytes extension offset + 4 bytes developer offset + "TRUEVISION-XFILE.\0"
@@ -15,9 +16,11 @@ const TGA_FOOTER: [u8; 26] = [
 /// Supported pixel formats for TGA images.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Format {
-    /// 24-bit RGB (stored as BGR on disk)
+    /// 8-bit grayscale (1 byte per pixel, TGA data type 3)
+    Grayscale,
+    /// 24-bit RGB (stored as BGR on disk, TGA data type 2)
     Rgb,
-    /// 32-bit RGBA (stored as BGRA on disk)
+    /// 32-bit RGBA (stored as BGRA on disk, TGA data type 2)
     Rgba,
 }
 
@@ -25,6 +28,7 @@ impl Format {
     /// Number of bytes per pixel.
     pub const fn bytes_per_pixel(self) -> usize {
         match self {
+            Self::Grayscale => 1,
             Self::Rgb => 3,
             Self::Rgba => 4,
         }
@@ -33,6 +37,14 @@ impl Format {
     /// Bits per pixel for the TGA header.
     pub const fn bits_per_pixel(self) -> u8 {
         (self.bytes_per_pixel() * 8) as u8
+    }
+
+    /// TGA image type code (2 = uncompressed true-color, 3 = uncompressed grayscale).
+    const fn tga_data_type(self) -> u8 {
+        match self {
+            Self::Grayscale => 3,
+            Self::Rgb | Self::Rgba => 2,
+        }
     }
 }
 
@@ -51,10 +63,8 @@ pub trait Framebuffer {
 /// A 2D framebuffer image capable of being exported to TGA format.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TgaImage {
-    width: usize,
-    height: usize,
     format: Format,
-    pixels: Vec<Color>,
+    pixels: Buffer2D<Color>,
 }
 
 impl TgaImage {
@@ -65,23 +75,20 @@ impl TgaImage {
 
     /// Creates a new image filled with the specified background color.
     pub fn with_color(width: usize, height: usize, format: Format, initial_color: Color) -> Self {
-        let pixels = vec![initial_color; width * height];
         Self {
-            width,
-            height,
             format,
-            pixels,
+            pixels: Buffer2D::new(width, height, initial_color),
         }
     }
 
     /// Returns the width of the image in pixels.
     pub const fn width(&self) -> usize {
-        self.width
+        self.pixels.width()
     }
 
     /// Returns the height of the image in pixels.
     pub const fn height(&self) -> usize {
-        self.height
+        self.pixels.height()
     }
 
     /// Returns the pixel format of the image.
@@ -96,54 +103,29 @@ impl TgaImage {
     ///
     /// Returns `true` if the pixel was within bounds and set, or `false` if it was clipped.
     pub fn set(&mut self, x: usize, y: usize, color: Color) -> bool {
-        if x < self.width && y < self.height {
-            let index = y * self.width + x;
-            self.pixels[index] = color;
-            true
-        } else {
-            false
-        }
+        self.pixels.set(x, y, color)
     }
 
     /// Retrieves the color of the pixel at coordinate `(x, y)`.
     ///
     /// Returns `None` if `(x, y)` is outside image bounds.
     pub fn get(&self, x: usize, y: usize) -> Option<Color> {
-        if x < self.width && y < self.height {
-            let index = y * self.width + x;
-            Some(self.pixels[index])
-        } else {
-            None
-        }
+        self.pixels.get(x, y).copied()
     }
 
     /// Fills the entire framebuffer with a single color.
     pub fn clear(&mut self, color: Color) {
-        self.pixels.fill(color);
+        self.pixels.clear(color);
     }
 
     /// Flips the image horizontally in-place.
     pub fn flip_horizontally(&mut self) {
-        let half = self.width / 2;
-        for y in 0..self.height {
-            for x in 0..half {
-                let left_idx = y * self.width + x;
-                let right_idx = y * self.width + (self.width - 1 - x);
-                self.pixels.swap(left_idx, right_idx);
-            }
-        }
+        self.pixels.flip_horizontally();
     }
 
     /// Flips the image vertically in-place.
     pub fn flip_vertically(&mut self) {
-        let half = self.height / 2;
-        for y in 0..half {
-            let top_row_start = y * self.width;
-            let bottom_row_start = (self.height - 1 - y) * self.width;
-            for x in 0..self.width {
-                self.pixels.swap(top_row_start + x, bottom_row_start + x);
-            }
-        }
+        self.pixels.flip_vertically();
     }
 
     /// Writes the image to an arbitrary byte writer in Truevision TGA format.
@@ -156,23 +138,28 @@ impl TgaImage {
 
         // 18-byte TGA Header
         let mut header = [0u8; 18];
-        header[2] = 2; // Data type code: 2 = Uncompressed True-Color
-        header[12..14].copy_from_slice(&(self.width as u16).to_le_bytes());
-        header[14..16].copy_from_slice(&(self.height as u16).to_le_bytes());
+        header[2] = self.format.tga_data_type();
+        header[12..14].copy_from_slice(&(self.width() as u16).to_le_bytes());
+        header[14..16].copy_from_slice(&(self.height() as u16).to_le_bytes());
         header[16] = self.format.bits_per_pixel();
         header[17] = if vflip { 0x00 } else { 0x20 };
 
         buf_writer.write_all(&header)?;
 
-        // Write pixel data in little-endian order (BGR / BGRA)
+        // Write pixel data in little-endian order (Gray / BGR / BGRA)
         match self.format {
+            Format::Grayscale => {
+                for pixel in self.pixels.as_slice() {
+                    buf_writer.write_all(&[pixel.r])?;
+                }
+            }
             Format::Rgb => {
-                for pixel in &self.pixels {
+                for pixel in self.pixels.as_slice() {
                     buf_writer.write_all(&pixel.to_bgr())?;
                 }
             }
             Format::Rgba => {
-                for pixel in &self.pixels {
+                for pixel in self.pixels.as_slice() {
                     buf_writer.write_all(&pixel.to_bgra())?;
                 }
             }
@@ -203,11 +190,11 @@ impl TgaImage {
 
 impl Framebuffer for TgaImage {
     fn width(&self) -> usize {
-        self.width
+        TgaImage::width(self)
     }
 
     fn height(&self) -> usize {
-        self.height
+        TgaImage::height(self)
     }
 
     fn set(&mut self, x: usize, y: usize, color: Color) -> bool {
@@ -257,6 +244,23 @@ mod tests {
 
         // Check TGA footer signature
         assert_eq!(&output[output.len() - 18..], b"TRUEVISION-XFILE.\0");
+    }
+
+    #[test]
+    fn test_tga_grayscale_serialization() {
+        let mut img = TgaImage::new(2, 1, Format::Grayscale);
+        img.set(0, 0, Color::rgb(42, 42, 42));
+        img.set(1, 0, Color::WHITE);
+
+        let mut output = Vec::new();
+        img.write_tga(&mut output, true).unwrap();
+
+        // 18 bytes header + 2 pixels * 1 byte + 26 bytes footer = 46 bytes
+        assert_eq!(output.len(), 18 + 2 + 26);
+        assert_eq!(output[2], 3); // Uncompressed grayscale
+        assert_eq!(output[16], 8); // 8 bpp
+        assert_eq!(output[18], 42);
+        assert_eq!(output[19], 255);
     }
 
     #[test]
