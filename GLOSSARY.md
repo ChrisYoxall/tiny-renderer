@@ -45,3 +45,23 @@ _Avoid_: Polygon, triangle (when referring to general `.obj` faces)
 **Wireframe**:
 A rendering mode that rasterizes only the edges of each face as line segments.
 _Avoid_: Skeleton, outline
+
+**Triangle**:
+A 2D or 3D geometric primitive defined by three ordered vertices.
+_Avoid_: Tri, facet
+
+**Bounding Box**:
+The smallest axis-aligned rectangle enclosing a triangle in screen coordinates.
+_Avoid_: AABB (when referring to 2D screen bounds), extents, enclosing rect
+
+**Barycentric Coordinates**:
+Three normalized weights summing to `1` that express a point as a weighted combination of a triangle's three vertices.
+_Avoid_: Area coordinates, blend weights, UV weights
+
+**Winding Order**:
+The cyclic ordering (counter-clockwise or clockwise) of a triangle's vertices in screen coordinates, determining whether a triangle faces toward or away from the viewer.
+_Avoid_: Vertex order, handedness
+
+**Back-Face Culling**:
+The optimization of discarding triangles whose winding order faces away from the viewer (clockwise in screen coordinates) before rasterizing their pixels.
+_Avoid_: Face hiding, occlusion culling

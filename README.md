@@ -5,7 +5,7 @@ code is [here](https://github.com/ssloy/tinyrenderer).
 
 Aim is learning & fun, rather than a re-usable production grade graphics library.
 
-Have implemented the first two lessons. Next time start at https://haqr.eu/tinyrenderer/rasterization/
+Have implemented through triangle rasterization and barycentric coordinates. Next time start at https://haqr.eu/tinyrenderer/z-buffer/
 
 ## Architectural Decisions
 

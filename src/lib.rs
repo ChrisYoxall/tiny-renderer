@@ -11,5 +11,6 @@ pub mod rasterizer;
 
 pub use color::Color;
 pub use image::{Format, Framebuffer, TgaImage};
-pub use math::Vec3;
+pub use math::{Barycentric, ScreenPoint, Vec3};
 pub use mesh::{Mesh, MeshError};
+pub use rasterizer::CullMode;
