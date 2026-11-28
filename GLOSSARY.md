@@ -65,3 +65,19 @@ _Avoid_: Vertex order, handedness
 **Back-Face Culling**:
 The optimization of discarding triangles whose winding order faces away from the viewer (clockwise in screen coordinates) before rasterizing their pixels.
 _Avoid_: Face hiding, occlusion culling
+
+**Depth**:
+The coordinate of a surface point along the viewing axis, where larger values are closer to the viewer.
+_Avoid_: Z-value, distance
+
+**Z-Buffer**:
+A 2D grid matching the framebuffer's dimensions that stores the closest recorded depth for each pixel.
+_Avoid_: Depth buffer
+
+**Depth Test**:
+The per-pixel check that accepts a candidate pixel only when its depth is strictly closer to the viewer than the value currently stored in the z-buffer.
+_Avoid_: Z-check, occlusion test
+
+**Hidden-Surface Removal**:
+The process of determining which surfaces are visible and discarding occluded pixels that lie behind closer geometry.
+_Avoid_: Surface hiding, visibility sorting
